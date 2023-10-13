@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 from pdf2image import convert_from_path
 import pandas as pd
 import pdb
+from merge_dataframes import merge_dataframes
+import argparse
 
 # Load AWS credentials and region from .env file
 load_dotenv()
@@ -17,14 +19,20 @@ region_name = os.getenv('AWS_REGION')
 # Initialize the Textract client
 client = boto3.client('textract', aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key, region_name=region_name)
 
-# Specify the local PDF file you want to OCR
-local_pdf_path = 'data/input/praha_page_4.pdf'  # Update with your actual local PDF path
+# Create an argument parser
+parser = argparse.ArgumentParser(description="Generate an output path based on the PDF file path")
+parser.add_argument("pdf_path", help="Path to the PDF file")
+args = parser.parse_args()
 
 # Convert each page of the PDF to images and process with Textract
-images = convert_from_path(local_pdf_path)
+images = convert_from_path(args.pdf_path)
 
-# Define the subfolder name for CSV files (the OCR output)
-csv_folder = 'data/output'
+# Define the subfolder name for CSV files
+output_folder = 'data/output'
+
+# Generate the CSV folder path by manipulating the PDF path
+pdf_base_name = os.path.splitext(os.path.basename(args.pdf_path))[0]
+csv_folder = os.path.join(output_folder, pdf_base_name)
 
 # Create the subfolder if it doesn't exist
 if not os.path.exists(csv_folder):
@@ -169,6 +177,9 @@ for page_number, image in enumerate(images, start=1):
 
     # add entry numbers to df at the first column
 
+    # initialize single_entry flag to False
+    single_entry = False
+
     if len(entry_numbers) == 1:
         df.loc[0] = [None] * len(df.columns)
 
@@ -237,3 +248,4 @@ for page_number, image in enumerate(images, start=1):
     # Clean up temporary PNG files
     os.remove('page_{}.png'.format(page_number))
 
+merge_dataframes(csv_folder)
