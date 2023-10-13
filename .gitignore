@@ -2,3 +2,4 @@ data/
 germanyinc-ocr-venv/
 .env
 .DS_Store
+src/__pycache__/
