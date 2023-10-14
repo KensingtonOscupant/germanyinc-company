@@ -28,7 +28,7 @@ def get_column_borders(line_object, image, threshold=100, tile_width=2, padding=
     # checking the right side
 
     while right_coordinate_checking_left < width:
-        print("Evaluating tile at:", left_coordinate_checking_right, right_coordinate_checking_right)
+        # print("Evaluating tile at:", left_coordinate_checking_right, right_coordinate_checking_right)
 
         # Crop the tile
         tile = image.crop((left_coordinate_checking_right, initial_top, right_coordinate_checking_right, initial_bottom))
