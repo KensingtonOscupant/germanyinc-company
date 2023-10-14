@@ -59,6 +59,9 @@ for page_number, image in enumerate(images, start=1):
 
     # CELL 3
 
+    '''This section of code is used to find the header row with the numbers 1, 2, 3, 4, 5, 6, and 7 by
+    checking if there are 7 blocks in a row that meet those criteria.'''
+
     # Define the expected text in eight consecutive lines
     expected_text = ["1", "2", "3", "4", "5", "6", "7"]
 
@@ -96,6 +99,9 @@ for page_number, image in enumerate(images, start=1):
 
     # CELL 4
 
+    '''From the seven numbers in the header row, we can calculate the center x coordinate of 
+    each number's bounding box and this way create seven axes, one at the center of each column of the HRA.'''
+
     vertical_lines = []
 
     for i, line in enumerate(lines):
@@ -118,6 +124,8 @@ for page_number, image in enumerate(images, start=1):
 
     # CELL 5
 
+    '''We group all the LINE objects into seven groups based on their proximity to the seven axes.'''
+
     # Initialize seven groups to store LINE objects
     line_groups = [[] for _ in range(7)]
 
@@ -137,6 +145,10 @@ for page_number, image in enumerate(images, start=1):
             line_groups[closest_line_index].append(block)
 
     # CELL 6
+
+    '''Overview: After creating an empty dataframe, we separate the records from each other using the coordinates
+    of the number of the entry ("divider_coordinates"). We then join each column of the record into a string
+    and add it to the dataframe.'''
 
     import pandas as pd
 
@@ -162,6 +174,10 @@ for page_number, image in enumerate(images, start=1):
     # Initialize a list to store the upper y coordinates
     divider_coordinates = []
 
+    '''We iterate through the first group of LINE objects and check if the text is a number. If it is, we add it to the
+    entry_numbers list. We also check if the skip_first_number flag is True. If it is, we skip the first number because 
+    the first one is not a divider coordinate.'''
+
     # Iterate through line_group[0]
     for i, block in enumerate(line_groups[0]):
         # Check if the 'Text' is a number
@@ -179,6 +195,10 @@ for page_number, image in enumerate(images, start=1):
 
     # initialize single_entry flag to False
     single_entry = False
+
+    '''If there is only one entry number, we create a new row in the dataframe and join the texts from each list in
+    line_groups into single strings, one per column, so that we get a list with six strings. We then append the 
+    joined string to the first row of the dataframe. We also set the single_entry flag to True.'''
 
     if len(entry_numbers) == 1:
         df.loc[0] = [None] * len(df.columns)
@@ -206,10 +226,10 @@ for page_number, image in enumerate(images, start=1):
         if single_entry:
             break
 
-        remaining_objects = []
-
         # Initialize lists to store blocks that meet the condition
         result_lists = [[] for _ in range(len(numbers_to_check))]
+
+        remaining_objects = []
 
         # Check if numbers_to_check is empty
         if not numbers_to_check:
