@@ -1,3 +1,6 @@
+from PIL import ImageDraw
+import numpy as np
+
 def get_column_borders(line_object, image, threshold=100, tile_width=2, padding=3):
     """This function takes a line object and returns the coordinates of the left and right borders of the column"""
     # get bounding box coordinates of line 1
@@ -101,9 +104,9 @@ def get_row_borders(line_object, image, threshold=100, tile_height=2, padding=3)
 
     # Convert initial coordinates to pixel coordinates
     width, height = image.size
-    initial_left = int(bbox_left * width)
+    initial_left = int(bbox_left * width) -4 # making the tile a bit wider to the left
     initial_top = int(bbox_top * height)
-    initial_right = int((bbox_left + bbox_width) * width)
+    initial_right = int((bbox_left + bbox_width) * width) +4 # making the tile a bit wider to the right
     initial_bottom = int((bbox_top + bbox_height) * height)
 
     tile_width = initial_right - initial_left  # Width remains the same for all tiles
@@ -136,6 +139,8 @@ def get_row_borders(line_object, image, threshold=100, tile_height=2, padding=3)
 
         # Check if at least half of the pixels are dark
         if dark_pixel_count >= 0.5 * total_pixels:
+
+            # image.crop((initial_left, top_coordinate_checking_bottom-100, initial_right+100, bottom_coordinate_checking_bottom+100)).show()
             break
         else:
             top_coordinate_checking_bottom += 1
@@ -163,6 +168,8 @@ def get_row_borders(line_object, image, threshold=100, tile_height=2, padding=3)
 
         # Check if at least half of the pixels are dark
         if dark_pixel_count >= 0.5 * total_pixels:
+
+            # image.crop((initial_left, top_coordinate_checking_top, initial_right, bottom_coordinate_checking_top)).show()
             break
         else:
             top_coordinate_checking_top -= 1
@@ -214,8 +221,13 @@ def find_header_row(response):
     # Define the expected text in eight consecutive lines
     expected_text = ["1", "2", "3", "4", "5", "6", "7"]
 
+    # Define the list of words to check for in the previous blocks
+    words_to_check = ["Prokura", "Eintragung", "Geschäftsführer"]
+
     # Initialize a counter to keep track of consecutive matches
     consecutive_matches = 0
+
+    found_words_condition = False  # Flag to indicate if any word from words_to_check is found
 
     # Store information about the seven lines
     numbers = []
@@ -228,10 +240,17 @@ def find_header_row(response):
         block_no += 1
         if block['BlockType'] == 'LINE':
             text = block['Text'].strip()
-            if text in expected_text:
-                print("text: " + text)
-                print("expected_text: " + str(expected_text))
-                print("consecutive_matches: " + str(consecutive_matches))
+
+            # Check if any word from the list of words has appeared in the text
+            for word in words_to_check:
+                if found_words_condition:
+                    break
+
+                if word in text:
+                    found_words_condition = True  # Set the flag to True
+                    break  # Exit the loop once a word is found
+
+            if found_words_condition and text in expected_text:
                 consecutive_matches += 1
                 expected_text.remove(text)
                 numbers.append(block)
@@ -305,7 +324,6 @@ def find_record_continued_from_previous_page(line_groups, y_dividers):
 
     # Iterate through the elements from index 1 to 5 (inclusive)
     for element in joined_texts[1:]:
-        print("loop running")
         if element != "":
             record_returned = True
 
@@ -316,3 +334,80 @@ def find_record_continued_from_previous_page(line_groups, y_dividers):
     else:
         # Return None if all elements are empty
         return None
+    
+def clean_image(image, response):
+    # Create a drawing context
+    draw = ImageDraw.Draw(image)
+
+    # Iterate through the Textract response to identify LINE objects and draw their bounding boxes in white
+    for block in response['Blocks']:
+        if block['BlockType'] == 'LINE':
+            left = block['Geometry']['BoundingBox']['Left'] * image.width
+            top = block['Geometry']['BoundingBox']['Top'] * image.height
+            width = block['Geometry']['BoundingBox']['Width'] * image.width
+            height = block['Geometry']['BoundingBox']['Height'] * image.height
+            right = left + width
+            bottom = top + height +6
+
+            # Draw a white rectangle around the LINE object's bounding box
+            draw.rectangle([left, top, right, bottom], fill="white")
+
+    return image
+
+def get_dark_pixels(image, threshold=128):
+    """Gets the number of dark pixels in each row and column of the image"""
+
+    # Convert the image to a NumPy array
+    image_array = np.array(image)
+
+    # Convert the image to grayscale
+    gray_image = np.array(image.convert("L"))
+
+    # Create a binary mask of dark pixels
+    dark_pixels = gray_image < threshold
+
+    # Sum the dark pixels along each row to get the counts
+    dark_pixels_per_row = np.sum(dark_pixels, axis=1)
+    dark_pixels_per_column = np.sum(dark_pixels, axis=0)
+
+    # 'dark_pixel_counts' now contains the number of dark pixels for each row
+
+    row_list = dark_pixels_per_row.tolist()
+    column_list = dark_pixels_per_column.tolist()
+
+    return row_list, column_list
+
+def find_max_dark_pixel_column(start, end, list_num_of_dark_pixels, coordinates, check_rows):
+    max_dark_pixels = 0
+    max_dark_pixel_column_index = None
+
+    for i in range(round(start), round(end)):
+        if list_num_of_dark_pixels[i] > max_dark_pixels:
+            max_dark_pixels = list_num_of_dark_pixels[i]
+            max_dark_pixel_column_index = i
+
+    if check_rows:
+
+        # Check if it's the last interval and the number of dark pixels is below 800
+        if max_dark_pixel_column_index is not None and end == coordinates[-1] and max_dark_pixels < 800:
+            # Set the highest row of pixels (lower border of the image) as the index
+            max_dark_pixel_column_index = len(list_num_of_dark_pixels) - 1
+
+    return max_dark_pixel_column_index
+
+def get_dividers(coordinates, list_num_of_dark_pixels, check_rows=False):
+    # Iterate through the intervals between x_coordinates
+    interval_indices_relative = []
+    interval_indices_absolute = []
+
+    for i in range(len(coordinates) - 1):
+        start = coordinates[i]
+        end = coordinates[i + 1]
+        max_dark_pixel_column_index = find_max_dark_pixel_column(start, end, list_num_of_dark_pixels, coordinates, check_rows)
+        print("start, end: ", start, end)
+        print(max_dark_pixel_column_index)
+        interval_indices_absolute.append(max_dark_pixel_column_index)
+        relative_max_dark_pixel_column_index = max_dark_pixel_column_index / len(list_num_of_dark_pixels)
+        interval_indices_relative.append(relative_max_dark_pixel_column_index)
+    
+    return interval_indices_relative, interval_indices_absolute
