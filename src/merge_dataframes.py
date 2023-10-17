@@ -20,16 +20,16 @@ def merge_dataframes(csv_folder):
         merged_df = pd.concat([merged_df, df], ignore_index=True)
 
     # Sort the merged dataframe by the 'Nummer der Eintragung' column
-    merged_df.sort_values(by=['Nummer der Eintragung'], inplace=True)
+    merged_df.sort_values(by=merged_df.columns[0], inplace=True)
 
     # Identify and handle merged entries
     merged_entries = []
 
     for index, row in merged_df.iterrows():
-        entry_number = row['Nummer der Eintragung']
+        entry_number = row.iloc[0]
         if entry_number in merged_entries:
             # Merge this row with the previous row
-            prev_row_index = merged_df.index[merged_df['Nummer der Eintragung'] == entry_number].max() - 1
+            prev_row_index = merged_df.index[merged_df.iloc[0] == entry_number].max() - 1
             prev_row = merged_df.loc[prev_row_index]
             for column in merged_df.columns:
                 if pd.isna(prev_row[column]) and not pd.isna(row[column]):
