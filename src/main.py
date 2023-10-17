@@ -6,6 +6,7 @@ import pandas as pd
 import pdb
 from merge_dataframes import merge_dataframes
 import argparse
+from ocr_pipeline import get_column_borders, get_row_borders, find_header_row, find_record_continued_from_previous_page, clean_image, get_dark_pixels, get_dividers
 
 # Load AWS credentials and region from .env file
 load_dotenv()
@@ -62,65 +63,30 @@ for page_number, image in enumerate(images, start=1):
     '''This section of code is used to find the header row with the numbers 1, 2, 3, 4, 5, 6, and 7 by
     checking if there are 7 blocks in a row that meet those criteria.'''
 
-    # Define the expected text in eight consecutive lines
-    expected_text = ["1", "2", "3", "4", "5", "6", "7"]
+    numbers, last_sequence_block = find_header_row(response)
 
-    # Initialize a counter to keep track of consecutive matches
-    consecutive_matches = 0
+    # CELL 3.1
 
-    # Store information about the seven lines
-    lines = []
-
-    block_no = 0
-    last_sequence_block = -1
-
-    # Iterate through the Textract response blocks
-    for block in response['Blocks']:
-        block_no += 1
-        if block['BlockType'] == 'LINE':
-            text = block['Text'].strip()
-            if text == expected_text[consecutive_matches]:
-                consecutive_matches += 1
-                lines.append(block)
-                if consecutive_matches == 7:
-                    last_sequence_block = block_no
-                    print("Seven consecutive lines with the expected text were found.")
-                    break
-            else:
-                consecutive_matches = 0  # Reset the counter if the text doesn't match
-                lines = []
-
-    else:
-        if consecutive_matches != 7:
-            print("Seven consecutive lines with the expected text were not found.")
-
-    # Save the page object
-    page_object = response['Blocks'][0]  # Assuming the page object is the first block
+    # preprocess image
+    image = clean_image(image, response)
 
     # CELL 4
 
     '''From the seven numbers in the header row, we can calculate the center x coordinate of 
     each number's bounding box and this way create seven axes, one at the center of each column of the HRA.'''
 
-    vertical_lines = []
+    x_dividers = []
 
-    for i, line in enumerate(lines):
-        # Extract the bounding box coordinates from the line object
-        bbox = line['Geometry']['BoundingBox']
-        left = bbox['Left']
-        top = bbox['Top']
-        width = bbox['Width']
-        height = bbox['Height']
+    # get number of dark pixels in each column and row
+    row_list, column_list = get_dark_pixels(image)
 
-        # Calculate the coordinates of the bounding box (just as an fyi in case it's useful somewhere else)
-        x1 = left
-        x2 = left + width
-        y1 = 1 - top
-        y2 = 1 - top + height
-        # create a center x coordinate of the bounding box
-        center_x = x1 + width / 2
+    # get the central x coordinate of each number in the header row
+    x_coordinates = []
+    for number in numbers:
+        x_coordinates.append((number['Geometry']['BoundingBox']['Left'] + number['Geometry']['BoundingBox']['Width']/2) * image.size[0])
 
-        vertical_lines.append(center_x)
+    # get the column dividers
+    x_dividers, x_dividers_absolute = get_dividers(x_coordinates, column_list) # the absolute dividers are just used if we want to plot the dividers
 
     # CELL 5
 
@@ -138,129 +104,69 @@ for page_number, image in enumerate(images, start=1):
             # Calculate the center_x coordinate of the LINE object
             center_x = left + width / 2
 
-            # Find the closest vertical line to the center_x
-            closest_line_index = min(range(len(vertical_lines)), key=lambda i: abs(center_x - vertical_lines[i]))
+            # Iterate through x_dividers to check where center_x belongs
+            for i, divider in enumerate(x_dividers):
+                if center_x < divider:
+                    # Append the LINE object to the corresponding list
+                    line_groups[i].append(block)
+                    break
+            else:
+                # If the center_x is greater than the last divider, assign it to the last group
+                line_groups[-1].append(block)
 
-            # Add the LINE object to the corresponding group
-            line_groups[closest_line_index].append(block)
+    # get the y coordinates of the divider lines
 
-    # CELL 6
+    # get the bottom coordinate of the first numbers object
+    y_coordinates = []
 
-    '''Overview: After creating an empty dataframe, we separate the records from each other using the coordinates
-    of the number of the entry ("divider_coordinates"). We then join each column of the record into a string
-    and add it to the dataframe.'''
+    # append bottom coordinate of one of the numbers in the header row
+    y_coordinates.append((numbers[0]['Geometry']['BoundingBox']['Top'] + numbers[0]['Geometry']['BoundingBox']['Height']) * image.size[1])
 
-    import pandas as pd
+    print(len(line_groups[0]))
+    # append the bottom coordinate of all objects in line_groups[0]
+    for line in line_groups[0]:
+        y_coordinates.append((line['Geometry']['BoundingBox']['Top'] + line['Geometry']['BoundingBox']['Height']) * image.size[1])
 
-    # Create a dictionary to store the resulting data
-    result_data = {
-        'Nummer der Eintragung': [],
-        'a) Firma b) Sitz c) Gegenstand des Unternehmens': [],
-        'Grundkapital oder Stammkapital DM / EUR': [],
-        'Vorstand, persönlich haftende Gesellschafter, Geschäftsführer, Abwickler': [],
-        'Prokura': [],
-        'Rechtsverhältnisse': [],
-        'a) Tag der Eintragung und Unterschrift b) Bemerkungen': []
-    }
+    # append the bottom border of the page
+    y_coordinates.append(image.size[1]-15)
 
-    # Create a pandas DataFrame to store the resulting data
-    df = pd.DataFrame(result_data)
+    y_dividers, y_dividers_absolute = get_dividers(y_coordinates, row_list) # the absolute dividers are just used if we want to plot the dividers
 
-    entry_numbers = []
+    filtered_line_groups = []
 
-    # Initialize a flag to indicate whether to skip the first number for gathering divider coordinates
-    skip_first_number = True
+    # check if there is a continued entry from the previous page
+    if find_record_continued_from_previous_page(line_groups, y_dividers):
+        continued_entry = find_record_continued_from_previous_page(line_groups, y_dividers)
+        # add the record to the filtered_line_groups
+        filtered_line_groups.append(continued_entry)
+        print("continued entry found")
 
-    # Initialize a list to store the upper y coordinates
-    divider_coordinates = []
+    # Iterate through pairs of adjacent y_dividers
+    for i in range(len(y_dividers) - 1):
+        lower_bound = y_dividers[i]
+        print("lower_bound", lower_bound)
+        upper_bound = y_dividers[i + 1]
+        print("upper_bound", upper_bound)
 
-    '''We iterate through the first group of LINE objects and check if the text is a number. If it is, we add it to the
-    entry_numbers list. We also check if the skip_first_number flag is True. If it is, we skip the first number because 
-    the first one is not a divider coordinate.'''
+        # Initialize a filtered group for this range
+        filtered_group = []
 
-    # Iterate through line_group[0]
-    for i, block in enumerate(line_groups[0]):
-        # Check if the 'Text' is a number
-        if block['Text'].isdigit():
-            entry_numbers.append(block['Text'])
-            if skip_first_number:
-                # Skip the first number
-                skip_first_number = False
-                continue
+        # Iterate through the line groups
+        for group in line_groups:
+            # Filter and join the LINE texts in the current group for this range
+            filtered_text = "\n".join(line['Text'] for line in group if lower_bound <= (line['Geometry']['BoundingBox']['Top'] + line['Geometry']['BoundingBox']['Height'] * 0.5) < upper_bound) # get the middle of the line object
+            
+            filtered_group.append(filtered_text)
 
-            # Save the upper y coordinate to the list
-            divider_coordinates.append(1 - block['Geometry']['BoundingBox']['Top'] + 0.02)
+        # Add the filtered group to the result
+        filtered_line_groups.append(filtered_group)
 
-    # add entry numbers to df at the first column
+    df = pd.DataFrame(filtered_line_groups)
 
-    # initialize single_entry flag to False
-    single_entry = False
-
-    '''If there is only one entry number, we create a new row in the dataframe and join the texts from each list in
-    line_groups into single strings, one per column, so that we get a list with six strings. We then append the 
-    joined string to the first row of the dataframe. We also set the single_entry flag to True.'''
-
-    if len(entry_numbers) == 1:
-        df.loc[0] = [None] * len(df.columns)
-
-        # create a string of the texts from each list in line_groups
-        joined_lines = [' '.join([obj['Text'] for obj in group]) for group in line_groups]
-
-        # append joined_lines as first row of df
-        df.loc[0] = joined_lines
-
-        # set single_entry flag to True
-        single_entry = True
-
-
-    else:
-        df.iloc[:, 0] = entry_numbers
-        
-    # CELL 7
-
-    numbers_to_check = divider_coordinates
-
-    for index, list_of_blocks in enumerate(line_groups[1:]):
-
-        # break loop if single entry is True
-        if single_entry:
-            break
-
-        # Initialize lists to store blocks that meet the condition
-        result_lists = [[] for _ in range(len(numbers_to_check))]
-
-        remaining_objects = []
-
-        # Check if numbers_to_check is empty
-        if not numbers_to_check:
-            # Append list_of_blocks to result_lists and skip the loop
-            result_lists.append(list_of_blocks)
-        else:
-            # Iterate through the blocks
-            for block in list_of_blocks:
-                assigned = False  # Flag to check if the block has been assigned to a list
-                for i, number in enumerate(numbers_to_check):
-                    if 1 - block['Geometry']['BoundingBox']['Top'] > number:
-                        result_lists[i].append(block)
-                        assigned = True
-                        break  # Break the loop once assigned to a list
-
-                if not assigned:
-                    remaining_objects.append(block)
-
-        # Join result_lists to create strings with line breaks preserved
-        joined_result_lists = ["\n".join([block['Text'] for block in result_list]) for result_list in result_lists]
-
-        # do the same for remaining_objects
-        joined_remaining_objects = "\n".join([block['Text'] for block in remaining_objects])
-
-        # append joined reimaining objects to the end of joined result lists
-        joined_result_lists.append(joined_remaining_objects)
-
-        # add joined results list to column number index
-        df.iloc[:, index+1] = joined_result_lists
-
-    # CELL 8
+    # if the first column of the last row has any non-numerical characters, drop the last row
+    if not df.iloc[-1, 0].isdigit():
+        df = df.drop(df.tail(1).index)
+        print("dropped the last row because it was not a number. Note: Log this in the future.")
 
     # Modify the CSV save code to save the CSV to the subfolder
     df.to_csv(csv_path, index=False)
